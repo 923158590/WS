@@ -1,0 +1,25 @@
+{
+  "name": "logistics-prototype",
+  "version": "0.1.0",
+  "description": "物流系统最小原型 - 验证仓库员功能",
+  "main": "prototype/test.js",
+  "scripts": {
+    "start": "node prototype/test.js",
+    "test": "node prototype/test.js"
+  },
+  "keywords": [
+    "minecraft",
+    "logistics",
+    "bot",
+    "warehouse"
+  ],
+  "author": "Claude Code",
+  "license": "MIT",
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.4"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
