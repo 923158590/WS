@@ -23,6 +23,203 @@ class WarehouserBot {
     console.log(`[Warehouser] ${this.bot.username} initialized (executor only)`);
   }
 
+  // ============ 统一执行接口 ============
+
+  /**
+   * 统一执行接口 - 解析参数并调用相应方法
+   * @param {Object|string} action - 动作对象或动作名称
+   * @param {Object} options - 参数选项
+   * @returns {Promise<Object>} 执行结果
+   *
+   * 支持的格式：
+   * 1. execute('moveTo', { x, y, z })
+   * 2. execute('withdraw', { chestPosition, itemType, quantity })
+   * 3. execute({ type: 'moveTo', x, y, z })
+   * 4. execute({ type: 'withdraw', chestPosition, itemType, quantity })
+   */
+  async execute(action, options = {}) {
+    try {
+      // 解析动作和参数
+      const { actionType, params } = this._parseAction(action, options);
+
+      console.log(`[Warehouser] 🎯 Executing: ${actionType}`);
+      console.log(`[Warehouser] 📋 Params:`, JSON.stringify(params).substring(0, 100));
+
+      // 调用对应方法
+      const result = await this._dispatchAction(actionType, params);
+
+      console.log(`[Warehouser] ✅ Action completed: ${actionType}`);
+      return { success: true, actionType, result };
+
+    } catch (error) {
+      console.error(`[Warehouser] ❌ Action failed:`, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * 批量执行动作
+   * @param {Array} actions - 动作数组
+   * @returns {Promise<Array>} 执行结果数组
+   */
+  async executeBatch(actions) {
+    console.log(`[Warehouser] 📦 Executing batch: ${actions.length} actions`);
+
+    const results = [];
+    for (let i = 0; i < actions.length; i++) {
+      console.log(`[Warehouser] 🔄 Action ${i + 1}/${actions.length}`);
+      const result = await this.execute(actions[i]);
+      results.push(result);
+
+      // 如果失败且不是最后一步，可以选择停止或继续
+      if (!result.success && i < actions.length - 1) {
+        console.warn(`[Warehouser] ⚠️  Action failed, continuing with next action`);
+      }
+    }
+
+    return results;
+  }
+
+  // ============ 参数解析 ============
+
+  /**
+   * 解析动作和参数
+   * @private
+   */
+  _parseAction(action, options) {
+    let actionType, params;
+
+    // 格式1: execute('moveTo', { x, y, z })
+    if (typeof action === 'string') {
+      actionType = action;
+      params = options;
+    }
+    // 格式2: execute({ type: 'moveTo', x, y, z })
+    else if (typeof action === 'object' && action.type) {
+      actionType = action.type;
+      params = { ...action };
+      delete params.type; // 移除type字段，保留其他参数
+    }
+    // 格式3: execute({ type: 'withdraw', chestPosition: {...}, ... })
+    else if (typeof action === 'object') {
+      // 如果没有明确的type字段，尝试推断
+      actionType = this._inferActionType(action);
+      params = action;
+    }
+    else {
+      throw new Error(`Invalid action format: ${JSON.stringify(action)}`);
+    }
+
+    // 参数验证和归一化
+    params = this._normalizeParams(actionType, params);
+
+    return { actionType, params };
+  }
+
+  /**
+   * 推断动作类型
+   * @private
+   */
+  _inferActionType(action) {
+    if (action.x !== undefined && action.y !== undefined && action.z !== undefined) {
+      return 'moveTo';
+    }
+    if (action.chestPosition && action.itemType && action.withdraw) {
+      return 'withdrawFromChest';
+    }
+    if (action.chestPosition && action.itemType && action.deposit) {
+      return 'depositToChest';
+    }
+    if (action.source && action.destination && action.items) {
+      return 'transfer';
+    }
+    if (action.destination && action.requiredItems) {
+      return 'dispatch';
+    }
+
+    throw new Error(`Cannot infer action type from: ${JSON.stringify(action)}`);
+  }
+
+  /**
+   * 归一化参数
+   * @private
+   */
+  _normalizeParams(actionType, params) {
+    switch (actionType) {
+      case 'moveTo':
+        // 支持多种位置格式
+        if (params.position) {
+          return params.position;
+        }
+        if (params.location) {
+          return params.location;
+        }
+        if (params.x !== undefined) {
+          return { x: params.x, y: params.y, z: params.z };
+        }
+        throw new Error('Missing position parameters');
+
+      case 'withdrawFromChest':
+      case 'depositToChest':
+        // 确保必需参数存在
+        if (!params.chestPosition) throw new Error('Missing chestPosition');
+        if (!params.itemType) throw new Error('Missing itemType');
+        if (!params.quantity) throw new Error('Missing quantity');
+        return params;
+
+      case 'transfer':
+        // 传递给调度器
+        return params;
+
+      case 'dispatch':
+        // 传递给调度器
+        return params;
+
+      default:
+        return params;
+    }
+  }
+
+  /**
+   * 分发动作到对应方法
+   * @private
+   */
+  async _dispatchAction(actionType, params) {
+    switch (actionType) {
+      case 'moveTo':
+        return await this.moveTo(params);
+
+      case 'withdrawFromChest':
+      case 'withdraw':
+        return await this.withdrawFromChest(params.chestPosition, params.itemType, params.quantity);
+
+      case 'depositToChest':
+      case 'deposit':
+        return await this.depositToChest(params.chestPosition, params.itemType, params.quantity);
+
+      case 'moveInventoryToChest':
+        return await this.moveInventoryToChest(params.itemType, params.quantity, params.chestPosition);
+
+      case 'moveChestToInventory':
+        return await this.moveChestToInventory(params.chestPosition, params.itemType, params.quantity);
+
+      case 'wait':
+        if (params.duration) {
+          await this.sleep(params.duration);
+          return { waited: params.duration };
+        }
+        return await this.waitUntilIdle();
+
+      case 'getStatus':
+        return this.getStatus();
+
+      default:
+        throw new Error(`Unknown action type: ${actionType}`);
+    }
+  }
+
+  // ============ 基础动作方法 ============
+
   /**
    * 移动到指定位置
    * @param {Object} location - 目标位置 {x, y, z}
@@ -37,10 +234,10 @@ class WarehouserBot {
     try {
       await this.bot.pathfinder.goto(goal);
       console.log(`[Warehouser] ✅ Arrived at ${x}, ${y}, ${z}`);
-      return true;
+      return { success: true, position: { x, y, z } };
     } catch (error) {
       console.error(`[Warehouser] ❌ Navigation failed: ${error.message}`);
-      return false;
+      return { success: false, error: error.message };
     }
   }
 
@@ -86,11 +283,11 @@ class WarehouserBot {
       chest.close();
 
       console.log(`[Warehouser] ✅ Withdrew ${toWithdraw}x ${itemType}`);
-      return { itemType, quantity: toWithdraw };
+      return { success: true, itemType, quantity: toWithdraw };
 
     } catch (error) {
       console.error(`[Warehouser] ❌ Withdraw failed: ${error.message}`);
-      return null;
+      return { success: false, error: error.message };
     } finally {
       this.isBusy = false;
       this.currentAction = null;
@@ -138,11 +335,11 @@ class WarehouserBot {
       chest.close();
 
       console.log(`[Warehouser] ✅ Deposited ${toDeposit}x ${itemType}`);
-      return { itemType, quantity: toDeposit };
+      return { success: true, itemType, quantity: toDeposit };
 
     } catch (error) {
       console.error(`[Warehouser] ❌ Deposit failed: ${error.message}`);
-      return null;
+      return { success: false, error: error.message };
     } finally {
       this.isBusy = false;
       this.currentAction = null;
@@ -168,6 +365,8 @@ class WarehouserBot {
   async moveChestToInventory(chestPosition, itemType, quantity) {
     return await this.withdrawFromChest(chestPosition, itemType, quantity);
   }
+
+  // ============ 辅助方法 ============
 
   /**
    * 打开箱子
@@ -212,6 +411,15 @@ class WarehouserBot {
     while (this.isBusy) {
       await this.sleep(100);
     }
+    return { success: true };
+  }
+
+  /**
+   * 等待指定时间
+   */
+  async wait(duration) {
+    await this.sleep(duration);
+    return { success: true, waited: duration };
   }
 
   sleep(ms) {
